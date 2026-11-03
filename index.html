@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="ru" class="bg-black text-[#E9D8A6]">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
+    <script>
+      (function () {
+        // 1. Guard against Vite HMR WebSocket failures in proxy / preview environments
+        if (typeof window !== 'undefined' && typeof window.WebSocket !== 'undefined') {
+          var RealWebSocket = window.WebSocket;
+
+          function ViteMockWebSocket(url, protocols) {
+            var target = new EventTarget();
+            var self = this;
+            self.url = url;
+            self.protocols = protocols;
+            self.readyState = 1; // WebSocket.OPEN
+            self.CONNECTING = 0;
+            self.OPEN = 1;
+            self.CLOSING = 2;
+            self.CLOSED = 3;
+            self.bufferedAmount = 0;
+            self.extensions = '';
+            self.binaryType = 'blob';
+
+            self.addEventListener = target.addEventListener.bind(target);
+            self.removeEventListener = target.removeEventListener.bind(target);
+            self.dispatchEvent = target.dispatchEvent.bind(target);
+
+            self.send = function () {};
+            self.close = function (code, reason) {
+              self.readyState = 3;
+              setTimeout(function () {
+                if (typeof self.onclose === 'function') {
+                  self.onclose(new CloseEvent('close', { code: code || 1000, reason: reason || '' }));
+                }
+                self.dispatchEvent(new CloseEvent('close', { code: code || 1000, reason: reason || '' }));
+              }, 0);
+            };
+
+            setTimeout(function () {
+              if (self.readyState === 1) {
+                if (typeof self.onopen === 'function') {
+                  self.onopen(new Event('open'));
+                }
+                self.dispatchEvent(new Event('open'));
+              }
+            }, 0);
+          }
+
+          ViteMockWebSocket.prototype = RealWebSocket.prototype;
+          ViteMockWebSocket.CONNECTING = 0;
+          ViteMockWebSocket.OPEN = 1;
+          ViteMockWebSocket.CLOSING = 2;
+          ViteMockWebSocket.CLOSED = 3;
+
+          window.WebSocket = function (url, protocols) {
+            var isViteHmr =
+              protocols === 'vite-hmr' ||
+              protocols === 'vite-ping' ||
+              (typeof url === 'string' && (url.indexOf('token=') !== -1 || url.indexOf('vite') !== -1));
+            if (isViteHmr) {
+              return new ViteMockWebSocket(url, protocols);
+            }
+            return new RealWebSocket(url, protocols);
+          };
+
+          window.WebSocket.CONNECTING = 0;
+          window.WebSocket.OPEN = 1;
+          window.WebSocket.CLOSING = 2;
+          window.WebSocket.CLOSED = 3;
+          window.WebSocket.prototype = RealWebSocket.prototype;
+        }
+
+        // 2. Global uncaught error filter for any remaining Vite client messages
+        var isViteWsError = function (e) {
+          if (!e) return false;
+          var msg = String(e.message || (e.reason && e.reason.message) || e);
+          var stack = String(e.stack || (e.reason && e.reason.stack) || '');
+          return (
+            msg.indexOf("reading 'send'") !== -1 ||
+            msg.indexOf('WebSocket') !== -1 ||
+            stack.indexOf('@vite/client') !== -1
+          );
+        };
+
+        window.addEventListener(
+          'error',
+          function (e) {
+            if (isViteWsError(e) || isViteWsError(e.error)) {
+              e.preventDefault();
+              e.stopImmediatePropagation();
+              return true;
+            }
+          },
+          true
+        );
+
+        window.addEventListener(
+          'unhandledrejection',
+          function (e) {
+            if (isViteWsError(e) || isViteWsError(e.reason)) {
+              e.preventDefault();
+              e.stopImmediatePropagation();
+            }
+          },
+          true
+        );
+
+        if ('serviceWorker' in navigator && (location.hostname === 'localhost' || location.hostname.includes('run.app'))) {
+          navigator.serviceWorker.getRegistrations().then(function (registrations) {
+            for (var i = 0; i < registrations.length; i++) {
+              registrations[i].unregister().catch(function () {});
+            }
+          }).catch(function () {});
+        }
+      })();
+    </script>
+    <title>Aether &amp; Singularity — Интерактивный астрономический атлас</title>
+    <meta name="description" content="Интерактивный образовательный веб-атлас и путеводитель для планетария: от эпициклов Птолемея и компромисса Тихо Браге до сита МАС 2006, структуры Млечного Пути и горизонта событий черных дыр." />
+    <meta property="og:title" content="Aether &amp; Singularity — Интерактивный астрономический атлас" />
+    <meta property="og:description" content="Интерактивный образовательный веб-атлас и путеводитель для планетария: от эпициклов Птолемея и компромисса Тихо Браге до сита МАС 2006, структуры Млечного Пути и горизонта событий черных дыр." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Aether" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />
+  </head>
+  <body class="bg-black text-[#E9D8A6] antialiased selection:bg-[#D4A373]/30 selection:text-[#E9D8A6]">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
