@@ -6,7 +6,6 @@ import {
   HelpCircle,
   Eye,
   Layers,
-  Compass,
   Sparkles,
   ChevronDown,
   ScrollText,
@@ -117,12 +116,9 @@ export default function App() {
               }
             }}
             className="font-display text-sm xs:text-base sm:text-lg font-bold tracking-tight text-[var(--text-parchment)] hover:text-[var(--accent-primary)] transition-colors flex items-center gap-1.5"
-            title="Эфир и Сингулярность — Астрономический атлас"
+            title="Di 🌒 — Эфир и Сингулярность"
           >
-            <Compass className="w-4 h-4 text-[var(--accent-primary)] shrink-0 hidden xs:block" />
-            <span>
-              Эфир<span className="hidden sm:inline"> и Сингулярность</span>
-            </span>
+            <span>Di 🌒</span>
           </a>
 
           {/* Integrated View Mode Switcher + Chapter Dropdown Trigger */}

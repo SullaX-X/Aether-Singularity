@@ -77,7 +77,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({ redNightMo
       <audio
         ref={audioRef}
         loop
-        preload="auto"
+        preload="metadata"
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onError={() => {

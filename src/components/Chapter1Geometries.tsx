@@ -91,6 +91,7 @@ export const Chapter1Geometries: React.FC<Chapter1GeometriesProps> = ({
 
   const trailRef = useRef<Array<{ x: number; y: number }>>([]);
   const timeRef = useRef<number>(0);
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
   const playTactileClick = () => {
     try {
@@ -98,7 +99,13 @@ export const Chapter1Geometries: React.FC<Chapter1GeometriesProps> = ({
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return;
-      const ctx = new AudioCtx();
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new AudioCtx();
+      }
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = 'sine';
@@ -135,19 +142,26 @@ export const Chapter1Geometries: React.FC<Chapter1GeometriesProps> = ({
     if (!ctx) return;
 
     let animId = 0;
+    let isRunning = false;
+    let isVisible = true;
     let isDragging = false;
     let lastX = 0;
+    let cachedW = 320;
+    let cachedH = 320;
+    const isMobile = window.innerWidth < 768;
 
     const resize = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.25 : 1.5);
       const rect = canvas.getBoundingClientRect();
-      canvas.width = Math.max(1, Math.floor(rect.width * dpr));
-      canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+      cachedW = Math.max(1, rect.width);
+      cachedH = Math.max(1, rect.height);
+      canvas.width = Math.max(1, Math.floor(cachedW * dpr));
+      canvas.height = Math.max(1, Math.floor(cachedH * dpr));
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
 
     resize();
-    window.addEventListener('resize', resize);
+    window.addEventListener('resize', resize, { passive: true });
 
     const onPointerDown = (e: PointerEvent) => {
       isDragging = true;
@@ -163,14 +177,18 @@ export const Chapter1Geometries: React.FC<Chapter1GeometriesProps> = ({
       isDragging = false;
     };
 
-    canvas.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
+    canvas.addEventListener('pointerdown', onPointerDown, { passive: true });
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
+    window.addEventListener('pointerup', onPointerUp, { passive: true });
 
     const render = () => {
-      const rect = canvas.getBoundingClientRect();
-      const w = rect.width;
-      const h = rect.height;
+      if (!isVisible || document.hidden) {
+        isRunning = false;
+        return;
+      }
+
+      const w = cachedW;
+      const h = cachedH;
       ctx.clearRect(0, 0, w, h);
 
       const cx = w / 2;
@@ -367,24 +385,33 @@ export const Chapter1Geometries: React.FC<Chapter1GeometriesProps> = ({
         ctx.restore();
       }
 
-      // Record glowing Mars trail
+      // Record glowing Mars trail (batched into 5 bands for 50x faster mobile rendering)
       const trail = trailRef.current;
       trail.push({ x: marsX, y: marsY });
-      if (trail.length > 250) {
+      const maxTrail = isMobile ? 180 : 240;
+      if (trail.length > maxTrail) {
         trail.shift();
       }
 
       if (trail.length > 2) {
         ctx.save();
-        for (let i = 1; i < trail.length; i++) {
-          const alpha = (i / trail.length) * 0.85;
+        const bands = 5;
+        const bandLen = Math.ceil(trail.length / bands);
+        for (let b = 0; b < bands; b++) {
+          const startIdx = Math.max(1, b * bandLen);
+          const endIdx = Math.min(trail.length, (b + 1) * bandLen + 1);
+          if (startIdx >= endIdx) continue;
+          const ratio = (b + 1) / bands;
+          const alpha = (ratio * 0.85).toFixed(2);
           ctx.strokeStyle = isRed
             ? `rgba(255, 46, 46, ${alpha})`
             : `rgba(255, 84, 0, ${alpha})`;
-          ctx.lineWidth = 1.4 + (i / trail.length) * 1.8;
+          ctx.lineWidth = 1.4 + ratio * 1.8;
           ctx.beginPath();
-          ctx.moveTo(trail[i - 1].x, trail[i - 1].y);
-          ctx.lineTo(trail[i].x, trail[i].y);
+          ctx.moveTo(trail[startIdx - 1].x, trail[startIdx - 1].y);
+          for (let i = startIdx; i < endIdx; i++) {
+            ctx.lineTo(trail[i].x, trail[i].y);
+          }
           ctx.stroke();
         }
         ctx.restore();
@@ -443,10 +470,44 @@ export const Chapter1Geometries: React.FC<Chapter1GeometriesProps> = ({
       animId = requestAnimationFrame(render);
     };
 
-    animId = requestAnimationFrame(render);
+    const startLoop = () => {
+      if (!isRunning && isVisible && !document.hidden) {
+        isRunning = true;
+        animId = requestAnimationFrame(render);
+      }
+    };
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        isVisible = entries[0]?.isIntersecting ?? true;
+        if (isVisible) {
+          resize();
+          startLoop();
+        } else {
+          cancelAnimationFrame(animId);
+          isRunning = false;
+        }
+      },
+      { rootMargin: '100px' }
+    );
+    io.observe(canvas);
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        cancelAnimationFrame(animId);
+        isRunning = false;
+      } else {
+        startLoop();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    startLoop();
 
     return () => {
       cancelAnimationFrame(animId);
+      io.disconnect();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('resize', resize);
       canvas.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointermove', onPointerMove);

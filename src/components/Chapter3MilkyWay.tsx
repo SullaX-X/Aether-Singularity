@@ -175,6 +175,15 @@ export const Chapter3MilkyWay: React.FC<Chapter3MilkyWayProps> = ({
   const targetZoomRef = useRef<number>(1.0);
   const currentZoomRef = useRef<number>(1.0);
   const [zoomPercent, setZoomPercent] = useState<number>(100);
+  const lastReportedZoomRef = useRef<number>(100);
+
+  const updateZoomBadge = (zoomVal: number) => {
+    const pct = Math.round((1 / zoomVal) * 100);
+    if (Math.abs(pct - lastReportedZoomRef.current) >= 3) {
+      lastReportedZoomRef.current = pct;
+      setZoomPercent(pct);
+    }
+  };
 
   const densityWavePhaseRef = useRef<number>(densityWavePhase);
   densityWavePhaseRef.current = densityWavePhase;
@@ -191,33 +200,42 @@ export const Chapter3MilkyWay: React.FC<Chapter3MilkyWayProps> = ({
 
   const modeRef = useRef(chapterMode);
   modeRef.current = chapterMode;
+  const startGalaxyLoopRef = useRef<(() => void) | null>(null);
 
   const handleSwitchMode = (mode: 'stars100k' | 'galaxy') => {
     setChapterMode(mode);
     modeRef.current = mode;
-    window.dispatchEvent(new Event('resize'));
-    setTimeout(() => {
-      window.dispatchEvent(new Event('resize'));
-    }, 40);
-    setTimeout(() => {
-      window.dispatchEvent(new Event('resize'));
-    }, 150);
+    if (mode === 'galaxy' && startGalaxyLoopRef.current) {
+      setTimeout(() => {
+        window.dispatchEvent(new Event('resize'));
+        startGalaxyLoopRef.current?.();
+      }, 20);
+    } else {
+      setTimeout(() => {
+        window.dispatchEvent(new Event('resize'));
+      }, 20);
+    }
   };
 
   const handleZoomIn = () => {
     targetZoomRef.current = Math.max(0.35, targetZoomRef.current - 0.22);
-    setZoomPercent(Math.round((1 / targetZoomRef.current) * 100));
+    const pct = Math.round((1 / targetZoomRef.current) * 100);
+    lastReportedZoomRef.current = pct;
+    setZoomPercent(pct);
   };
 
   const handleZoomOut = () => {
     targetZoomRef.current = Math.min(2.8, targetZoomRef.current + 0.22);
-    setZoomPercent(Math.round((1 / targetZoomRef.current) * 100));
+    const pct = Math.round((1 / targetZoomRef.current) * 100);
+    lastReportedZoomRef.current = pct;
+    setZoomPercent(pct);
   };
 
   const handleResetZoomAndAngle = () => {
     userYawRef.current = 0;
     userPitchRef.current = 0;
     targetZoomRef.current = 1.0;
+    lastReportedZoomRef.current = 100;
     setZoomPercent(100);
     const opt = VIEW_OPTIONS.find((v) => v.id === galaxyView) || VIEW_OPTIONS[0];
     baseTargetCameraPosRef.current.set(opt.targetPos[0], opt.targetPos[1], opt.targetPos[2]);
@@ -235,14 +253,16 @@ export const Chapter3MilkyWay: React.FC<Chapter3MilkyWayProps> = ({
     baseTargetCameraPosRef.current.set(opt.targetPos[0], opt.targetPos[1], opt.targetPos[2]);
     targetLookAtRef.current.set(opt.targetLook[0], opt.targetLook[1], opt.targetLook[2]);
     targetZoomRef.current = 1.0;
+    lastReportedZoomRef.current = 100;
     setZoomPercent(100);
   };
 
-  // 1. THREE.JS 80,000+ ЧАСТИЦ СПИРАЛЬНОЙ ГАЛАКТИКИ (ИНИЦИАЛИЗАЦИЯ 1 РАЗ БЕЗ ПЕРЕЗАГРУЗОК)
+  // 1. THREE.JS ЧАСТИЦЫ СПИРАЛЬНОЙ ГАЛАКТИКИ (АДАПТИВНО ДЛЯ МОБИЛЬНЫХ УСТРОЙСТВ И ПАУЗА ВНЕ ЭКРАНА)
   useEffect(() => {
     const container = mountRef.current;
     if (!container) return;
 
+    const isMobile = window.innerWidth < 768;
     const scene = new THREE.Scene();
     const width = container.clientWidth || 400;
     const height = container.clientHeight || 340;
@@ -252,12 +272,12 @@ export const Chapter3MilkyWay: React.FC<Chapter3MilkyWayProps> = ({
     camera.lookAt(0, 0, 0);
 
     const renderer = new THREE.WebGLRenderer({
-      antialias: true,
+      antialias: !isMobile,
       alpha: true,
       powerPreference: 'high-performance',
     });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 1.2 : 1.5));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.15;
@@ -267,8 +287,8 @@ export const Chapter3MilkyWay: React.FC<Chapter3MilkyWayProps> = ({
     scene.add(galaxyGroup);
     galaxyGroupRef.current = galaxyGroup;
 
-    // ГЕНЕРАЦИЯ 80 000 ЗВЁЗД ПО КИНЕМАТИКЕ ЛИНА — ШУ
-    const starCount = 80000;
+    // ГЕНЕРАЦИЯ ЗВЁЗД ПО КИНЕМАТИКЕ ЛИНА — ШУ (Оптимизировано для мобильных GPU)
+    const starCount = isMobile ? 28000 : 65000;
     const starPositions = new Float32Array(starCount * 3);
     const starColors = new Float32Array(starCount * 3);
 
@@ -276,20 +296,22 @@ export const Chapter3MilkyWay: React.FC<Chapter3MilkyWayProps> = ({
     const colorCore = new THREE.Color(isNight ? 0xff2e2e : 0xf3e5ab);
     const colorArm = new THREE.Color(isNight ? 0xff6666 : 0x00f5d4);
     const colorDust = new THREE.Color(isNight ? 0x661111 : 0x7209b7);
+    const colorGold = new THREE.Color(0xd4af37);
+    const colorWhite = new THREE.Color(0xffffff);
+    const tempCol = new THREE.Color();
 
     const armCount = 4;
-    const pitchAngle = 0.22; // Угол закручивания логарифмической спирали
+    const pitchAngle = 0.22;
 
     for (let i = 0; i < starCount; i++) {
       const armIdx = i % armCount;
-      const isBulge = i < starCount * 0.22; // 22% звезд в ядре/балдже
+      const isBulge = i < starCount * 0.22;
 
       let radius = 0;
       let angle = 0;
       let y = 0;
 
       if (isBulge) {
-        // Центральный бар и балдж (трехосный эллипсоид)
         radius = Math.pow(Math.random(), 1.5) * 0.92;
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.acos(Math.random() * 2 - 1);
@@ -297,7 +319,6 @@ export const Chapter3MilkyWay: React.FC<Chapter3MilkyWayProps> = ({
         y = radius * Math.cos(phi) * 0.45;
         radius = radius * Math.sin(phi);
       } else {
-        // Логарифмические рукава по кинематике Лина — Шу
         const rNorm = Math.pow(Math.random(), 0.65);
         radius = 0.5 + rNorm * 3.25;
 
@@ -316,18 +337,17 @@ export const Chapter3MilkyWay: React.FC<Chapter3MilkyWayProps> = ({
       starPositions[i * 3 + 1] = y;
       starPositions[i * 3 + 2] = z;
 
-      let starCol: THREE.Color;
       if (isBulge) {
-        starCol = colorCore.clone().lerp(new THREE.Color(0xd4af37), Math.random() * 0.5);
+        tempCol.copy(colorCore).lerp(colorGold, Math.random() * 0.5);
       } else if (Math.random() > 0.38) {
-        starCol = colorArm.clone().lerp(new THREE.Color(0xffffff), Math.random() * 0.4);
+        tempCol.copy(colorArm).lerp(colorWhite, Math.random() * 0.4);
       } else {
-        starCol = colorDust.clone().lerp(colorArm, Math.random() * 0.3);
+        tempCol.copy(colorDust).lerp(colorArm, Math.random() * 0.3);
       }
 
-      starColors[i * 3] = starCol.r;
-      starColors[i * 3 + 1] = starCol.g;
-      starColors[i * 3 + 2] = starCol.b;
+      starColors[i * 3] = tempCol.r;
+      starColors[i * 3 + 1] = tempCol.g;
+      starColors[i * 3 + 2] = tempCol.b;
     }
 
     const starGeom = new THREE.BufferGeometry();
@@ -335,7 +355,7 @@ export const Chapter3MilkyWay: React.FC<Chapter3MilkyWayProps> = ({
     starGeom.setAttribute('color', new THREE.BufferAttribute(starColors, 3));
 
     const starMat = new THREE.PointsMaterial({
-      size: 0.038,
+      size: isMobile ? 0.048 : 0.038,
       vertexColors: true,
       transparent: true,
       opacity: 0.9,
@@ -346,8 +366,8 @@ export const Chapter3MilkyWay: React.FC<Chapter3MilkyWayProps> = ({
     galaxyGroup.add(starPoints);
     starPointsRef.current = starPoints;
 
-    // 2. ГАЛО ТЕМНОЙ МАТЕРИИ (12 000 ЧАСТИЦ)
-    const haloCount = 12000;
+    // 2. ГАЛО ТЕМНОЙ МАТЕРИИ
+    const haloCount = isMobile ? 4500 : 10000;
     const haloPositions = new Float32Array(haloCount * 3);
     const haloColors = new Float32Array(haloCount * 3);
     const haloColor = new THREE.Color(isNight ? 0x991111 : 0x7209b7);
@@ -371,7 +391,7 @@ export const Chapter3MilkyWay: React.FC<Chapter3MilkyWayProps> = ({
     haloGeom.setAttribute('color', new THREE.BufferAttribute(haloColors, 3));
 
     const haloMat = new THREE.PointsMaterial({
-      size: 0.046,
+      size: isMobile ? 0.055 : 0.046,
       vertexColors: true,
       transparent: true,
       opacity: 0.22,
@@ -429,7 +449,6 @@ export const Chapter3MilkyWay: React.FC<Chapter3MilkyWayProps> = ({
         lastX = e.clientX;
         lastY = e.clientY;
 
-        // Быстрый дабл-тап пальцем для мгновенного приближения к ядру / Солнцу
         const now = performance.now();
         if (now - lastTapTime < 320) {
           if (targetZoomRef.current > 0.8) {
@@ -437,7 +456,7 @@ export const Chapter3MilkyWay: React.FC<Chapter3MilkyWayProps> = ({
           } else {
             targetZoomRef.current = 1.0;
           }
-          setZoomPercent(Math.round((1 / targetZoomRef.current) * 100));
+          updateZoomBadge(targetZoomRef.current);
           lastTapTime = 0;
         } else {
           lastTapTime = now;
@@ -453,7 +472,6 @@ export const Chapter3MilkyWay: React.FC<Chapter3MilkyWayProps> = ({
       activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
       if (activePointers.size >= 2) {
-        // Щипок двумя пальцами для плавного зума на смартфонах
         const pts = Array.from(activePointers.values());
         const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
         if (prevPinchDist > 0) {
@@ -461,12 +479,11 @@ export const Chapter3MilkyWay: React.FC<Chapter3MilkyWayProps> = ({
           if (ratio > 0.2 && ratio < 5) {
             const nextZoom = targetZoomRef.current / Math.pow(ratio, 1.4);
             targetZoomRef.current = THREE.MathUtils.clamp(nextZoom, 0.35, 2.8);
-            setZoomPercent(Math.round((1 / targetZoomRef.current) * 100));
+            updateZoomBadge(targetZoomRef.current);
           }
         }
         prevPinchDist = dist;
       } else if (activePointers.size === 1) {
-        // Вращение одним пальцем
         const dx = e.clientX - lastX;
         const dy = e.clientY - lastY;
         lastX = e.clientX;
@@ -493,26 +510,34 @@ export const Chapter3MilkyWay: React.FC<Chapter3MilkyWayProps> = ({
       e.preventDefault();
       const zoomDelta = e.deltaY * 0.0016;
       targetZoomRef.current = THREE.MathUtils.clamp(targetZoomRef.current + zoomDelta, 0.35, 2.8);
-      setZoomPercent(Math.round((1 / targetZoomRef.current) * 100));
+      updateZoomBadge(targetZoomRef.current);
     };
 
     const domElement = renderer.domElement;
-    domElement.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
-    window.addEventListener('pointercancel', onPointerUp);
+    domElement.addEventListener('pointerdown', onPointerDown, { passive: true });
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
+    window.addEventListener('pointerup', onPointerUp, { passive: true });
+    window.addEventListener('pointercancel', onPointerUp, { passive: true });
     domElement.addEventListener('wheel', onWheel, { passive: false });
 
-    // НЕПРЕРЫВНЫЙ АНИМАЦИОННЫЙ ЦИКЛ БЕЗ СБРОСОВ
+    // АНИМАЦИОННЫЙ ЦИКЛ БЕЗ АЛЛОКАЦИЙ ПАМЯТИ И С УМНОЙ ПАУЗОЙ ВНЕ ЭКРАНА
     let animId = 0;
+    let isRunning = false;
+    let isVisible = true;
     let lastTime = performance.now();
+    const camRay = new THREE.Vector3();
+    const scaledTargetPos = new THREE.Vector3();
 
     const animate = () => {
+      if (!isVisible || document.hidden || modeRef.current !== 'galaxy') {
+        isRunning = false;
+        return;
+      }
+
       const now = performance.now();
       const delta = Math.min((now - lastTime) * 0.001, 0.1);
       lastTime = now;
 
-      // Плавное накопление угла вращения: НИКОГДА НЕ СБРАСЫВАЕТСЯ ПРИ КЛИКАХ
       galaxyRotationRef.current += delta * 0.09;
       galaxyGroup.rotation.y = galaxyRotationRef.current + densityWavePhaseRef.current + userYawRef.current;
       galaxyGroup.rotation.x = userPitchRef.current;
@@ -522,7 +547,6 @@ export const Chapter3MilkyWay: React.FC<Chapter3MilkyWayProps> = ({
         haloPointsRef.current.visible = showDarkMatterRef.current;
       }
 
-      // ПЛАВНАЯ ИНТЕРПОЛЯЦИЯ ЗУМА И КАМЕРЫ (LERP) БЕЗ ПЕРЕЗАПУСКОВ
       currentZoomRef.current += (targetZoomRef.current - currentZoomRef.current) * 0.08;
 
       const look = currentLookAtRef.current;
@@ -530,8 +554,8 @@ export const Chapter3MilkyWay: React.FC<Chapter3MilkyWayProps> = ({
 
       const basePos = baseTargetCameraPosRef.current;
       const targetLook = targetLookAtRef.current;
-      const camRay = new THREE.Vector3().subVectors(basePos, targetLook);
-      const scaledTargetPos = new THREE.Vector3().copy(targetLook).addScaledVector(camRay, currentZoomRef.current);
+      camRay.subVectors(basePos, targetLook);
+      scaledTargetPos.copy(targetLook).addScaledVector(camRay, currentZoomRef.current);
 
       camera.position.lerp(scaledTargetPos, 0.045);
       camera.lookAt(look);
@@ -540,21 +564,58 @@ export const Chapter3MilkyWay: React.FC<Chapter3MilkyWayProps> = ({
       animId = requestAnimationFrame(animate);
     };
 
-    animate();
-
     const handleResize = () => {
       if (!container) return;
       const w = container.clientWidth;
       const h = container.clientHeight;
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
+      if (w > 10 && h > 10) {
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+      }
     };
 
-    window.addEventListener('resize', handleResize);
+    const startLoop = () => {
+      if (!isRunning && isVisible && !document.hidden && modeRef.current === 'galaxy') {
+        isRunning = true;
+        lastTime = performance.now();
+        animId = requestAnimationFrame(animate);
+      }
+    };
+    startGalaxyLoopRef.current = startLoop;
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        isVisible = entries[0]?.isIntersecting ?? true;
+        if (isVisible) {
+          handleResize();
+          startLoop();
+        } else {
+          cancelAnimationFrame(animId);
+          isRunning = false;
+        }
+      },
+      { rootMargin: '120px' }
+    );
+    io.observe(container);
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        cancelAnimationFrame(animId);
+        isRunning = false;
+      } else {
+        startLoop();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('resize', handleResize, { passive: true });
+
+    startLoop();
 
     return () => {
       cancelAnimationFrame(animId);
+      io.disconnect();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('resize', handleResize);
       domElement.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointermove', onPointerMove);

@@ -88,16 +88,46 @@ export const CosmicRoadDock: React.FC<CosmicRoadDockProps> = ({
   const isClickNavigatingRef = useRef<boolean>(false);
   const clickTimerRef = useRef<number | null>(null);
 
+  const lastProgressRef = useRef<number>(0);
+  const lastStationIdRef = useRef<string>('hero');
+
   // Synchronize with activeWindowChapterIndex in window mode, or continuous chapter-by-chapter scroll in stream mode
   useEffect(() => {
     if (isWindowMode && activeWindowChapterIndex !== undefined && activeWindowChapterIndex !== null) {
+      lastProgressRef.current = activeWindowChapterIndex;
       setScrollProgress(activeWindowChapterIndex);
       const st = COSMIC_STATIONS[activeWindowChapterIndex];
-      if (st) setActiveStationId(st.id);
+      if (st) {
+        lastStationIdRef.current = st.id;
+        setActiveStationId(st.id);
+      }
       return;
     }
 
     let ticking = false;
+    let cachedPositions: number[] = [];
+    let cachedScrollHeight = 0;
+
+    const measurePositions = () => {
+      const scrollY = window.scrollY;
+      cachedScrollHeight = document.documentElement.scrollHeight;
+      cachedPositions = COSMIC_STATIONS.map((station) => {
+        const el = document.getElementById(station.id);
+        if (!el) return 0;
+        return el.getBoundingClientRect().top + scrollY;
+      });
+    };
+
+    const commitProgress = (nextProgress: number, nextStationId: string) => {
+      if (Math.abs(nextProgress - lastProgressRef.current) >= 0.03 || nextProgress === 0 || nextProgress === COSMIC_STATIONS.length - 1) {
+        lastProgressRef.current = nextProgress;
+        setScrollProgress(nextProgress);
+      }
+      if (nextStationId !== lastStationIdRef.current) {
+        lastStationIdRef.current = nextStationId;
+        setActiveStationId(nextStationId);
+      }
+    };
 
     const updateProgress = () => {
       if (isClickNavigatingRef.current) {
@@ -109,32 +139,25 @@ export const CosmicRoadDock: React.FC<CosmicRoadDockProps> = ({
       const windowHeight = window.innerHeight;
       const scrollHeight = document.documentElement.scrollHeight;
 
+      if (cachedPositions.length === 0 || Math.abs(scrollHeight - cachedScrollHeight) > 40) {
+        measurePositions();
+      }
+
       // Bottom of page check (Chapter 4 Black Hole)
       if (scrollY + windowHeight >= scrollHeight - 60) {
-        setScrollProgress(COSMIC_STATIONS.length - 1);
-        setActiveStationId(COSMIC_STATIONS[COSMIC_STATIONS.length - 1].id);
+        commitProgress(COSMIC_STATIONS.length - 1, COSMIC_STATIONS[COSMIC_STATIONS.length - 1].id);
         ticking = false;
         return;
       }
 
       // Top of page check (Hero Armillary)
       if (scrollY <= 25) {
-        setScrollProgress(0);
-        setActiveStationId(COSMIC_STATIONS[0].id);
+        commitProgress(0, COSMIC_STATIONS[0].id);
         ticking = false;
         return;
       }
 
-      // Collect TRUE absolute document coordinates of each chapter (getBoundingClientRect + scrollY)
-      // This completely avoids incorrect offsets caused by relative parent containers
-      const positions: number[] = COSMIC_STATIONS.map((station) => {
-        const el = document.getElementById(station.id);
-        if (!el) return 0;
-        const rect = el.getBoundingClientRect();
-        return rect.top + scrollY;
-      });
-
-      // User reading focus zone: 35% down from top of viewport
+      const positions = cachedPositions;
       const focusY = scrollY + windowHeight * 0.35;
 
       let computedProgress = 0;
@@ -144,7 +167,6 @@ export const CosmicRoadDock: React.FC<CosmicRoadDockProps> = ({
       } else if (focusY >= positions[positions.length - 1]) {
         computedProgress = positions.length - 1;
       } else {
-        // Linearly interpolate strictly within the current chapter interval
         for (let i = 0; i < positions.length - 1; i++) {
           const start = positions[i];
           const end = positions[i + 1];
@@ -157,15 +179,12 @@ export const CosmicRoadDock: React.FC<CosmicRoadDockProps> = ({
         }
       }
 
-      setScrollProgress(computedProgress);
-
       const closestIndex = Math.min(
         COSMIC_STATIONS.length - 1,
         Math.max(0, Math.round(computedProgress))
       );
-      if (COSMIC_STATIONS[closestIndex]) {
-        setActiveStationId(COSMIC_STATIONS[closestIndex].id);
-      }
+      const nextStationId = COSMIC_STATIONS[closestIndex]?.id || 'hero';
+      commitProgress(computedProgress, nextStationId);
 
       ticking = false;
     };
@@ -177,13 +196,19 @@ export const CosmicRoadDock: React.FC<CosmicRoadDockProps> = ({
       }
     };
 
+    const handleResize = () => {
+      measurePositions();
+      handleScroll();
+    };
+
+    measurePositions();
     window.addEventListener('scroll', handleScroll, { passive: true });
-    window.addEventListener('resize', handleScroll, { passive: true });
+    window.addEventListener('resize', handleResize, { passive: true });
     updateProgress();
 
     return () => {
       window.removeEventListener('scroll', handleScroll);
-      window.removeEventListener('resize', handleScroll);
+      window.removeEventListener('resize', handleResize);
       if (clickTimerRef.current) {
         window.clearTimeout(clickTimerRef.current);
       }

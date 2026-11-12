@@ -27,18 +27,18 @@ export const Chapter4BlackHole: React.FC<Chapter4BlackHoleProps> = ({
   onOpenGlossary,
 }) => {
   const [distanceRs, setDistanceRs] = useState<number>(3.0);
-  const [tiltDeg, setTiltDeg] = useState<number>(18);
   const [showTakeaways, setShowTakeaways] = useState<boolean>(false);
-
-  const [observerSeconds, setObserverSeconds] = useState<number>(0);
-  const [travelerSeconds, setTravelerSeconds] = useState<number>(0);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const presetScrollRef = useRef<HTMLDivElement | null>(null);
+  const observerClockRef = useRef<HTMLSpanElement | null>(null);
+  const travelerClockRef = useRef<HTMLSpanElement | null>(null);
+  const observerSecondsRef = useRef<number>(0);
+  const travelerSecondsRef = useRef<number>(0);
+
   const distRef = useRef(distanceRs);
   distRef.current = distanceRs;
-  const tiltRef = useRef(tiltDeg);
-  tiltRef.current = tiltDeg;
+  const tiltRef = useRef<number>(18);
   const redModeRef = useRef(redNightMode);
   redModeRef.current = redNightMode;
 
@@ -52,20 +52,6 @@ export const Chapter4BlackHole: React.FC<Chapter4BlackHoleProps> = ({
   const timeRate = Math.sqrt(Math.max(0.0004, 1 - 1 / Math.max(1.0005, distanceRs)));
 
   useEffect(() => {
-    let last = performance.now();
-    const interval = window.setInterval(() => {
-      const now = performance.now();
-      const dt = (now - last) / 1000;
-      last = now;
-      const r = Math.max(1.001, distRef.current);
-      const lorentz = r <= 1.02 ? 0.002 : Math.sqrt(Math.max(0, 1 - 1 / r));
-      setObserverSeconds((prev) => prev + dt);
-      setTravelerSeconds((prev) => prev + dt * lorentz);
-    }, 50);
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -76,28 +62,28 @@ export const Chapter4BlackHole: React.FC<Chapter4BlackHoleProps> = ({
     });
 
     let animId = 0;
+    let isRunning = false;
+    let isVisible = true;
     let isDragging = false;
     let lastY = 0;
-    let lastX = 0;
 
     const onPointerDown = (e: PointerEvent) => {
       isDragging = true;
       lastY = e.clientY;
-      lastX = e.clientX;
     };
     const onPointerMove = (e: PointerEvent) => {
       if (!isDragging) return;
       const dy = e.clientY - lastY;
       lastY = e.clientY;
-      setTiltDeg((prev) => Math.max(4, Math.min(48, prev + dy * 0.2)));
+      tiltRef.current = Math.max(4, Math.min(48, tiltRef.current + dy * 0.2));
     };
     const onPointerUp = () => {
       isDragging = false;
     };
 
-    canvas.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
+    canvas.addEventListener('pointerdown', onPointerDown, { passive: true });
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
+    window.addEventListener('pointerup', onPointerUp, { passive: true });
 
     if (!gl) {
       return () => {
@@ -299,8 +285,10 @@ export const Chapter4BlackHole: React.FC<Chapter4BlackHoleProps> = ({
     const tiltLoc = gl.getUniformLocation(program, 'u_tilt');
     const redLoc = gl.getUniformLocation(program, 'u_redMode');
 
+    const isMobile = window.innerWidth < 768;
+
     const resize = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.15 : 1.5);
       const rect = canvas.getBoundingClientRect();
       canvas.width = Math.max(1, Math.floor(rect.width * dpr));
       canvas.height = Math.max(1, Math.floor(rect.height * dpr));
@@ -308,11 +296,38 @@ export const Chapter4BlackHole: React.FC<Chapter4BlackHoleProps> = ({
     };
 
     resize();
-    window.addEventListener('resize', resize);
+    window.addEventListener('resize', resize, { passive: true });
 
     const startTime = performance.now();
+    let lastClockTick = startTime;
+    let lastClockDomUpdate = 0;
+
     const render = () => {
-      const elapsed = (performance.now() - startTime) * 0.001;
+      if (!isVisible || document.hidden) {
+        isRunning = false;
+        return;
+      }
+
+      const now = performance.now();
+      const dt = Math.min(0.1, (now - lastClockTick) * 0.001);
+      lastClockTick = now;
+
+      const r = Math.max(1.001, distRef.current);
+      const lorentz = r <= 1.02 ? 0.002 : Math.sqrt(Math.max(0, 1 - 1 / r));
+      observerSecondsRef.current += dt;
+      travelerSecondsRef.current += dt * lorentz;
+
+      if (now - lastClockDomUpdate >= 95) {
+        lastClockDomUpdate = now;
+        if (observerClockRef.current) {
+          observerClockRef.current.textContent = `${observerSecondsRef.current.toFixed(1)} с`;
+        }
+        if (travelerClockRef.current) {
+          travelerClockRef.current.textContent = `${travelerSecondsRef.current.toFixed(1)} с`;
+        }
+      }
+
+      const elapsed = (now - startTime) * 0.001;
       gl.uniform2f(resLoc, canvas.width, canvas.height);
       gl.uniform1f(timeLoc, elapsed);
       gl.uniform1f(distLoc, distRef.current);
@@ -323,10 +338,45 @@ export const Chapter4BlackHole: React.FC<Chapter4BlackHoleProps> = ({
       animId = requestAnimationFrame(render);
     };
 
-    animId = requestAnimationFrame(render);
+    const startLoop = () => {
+      if (!isRunning && isVisible && !document.hidden) {
+        isRunning = true;
+        lastClockTick = performance.now();
+        animId = requestAnimationFrame(render);
+      }
+    };
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        isVisible = entries[0]?.isIntersecting ?? true;
+        if (isVisible) {
+          resize();
+          startLoop();
+        } else {
+          cancelAnimationFrame(animId);
+          isRunning = false;
+        }
+      },
+      { rootMargin: '100px' }
+    );
+    io.observe(canvas);
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        cancelAnimationFrame(animId);
+        isRunning = false;
+      } else {
+        startLoop();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    startLoop();
 
     return () => {
       cancelAnimationFrame(animId);
+      io.disconnect();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('resize', resize);
       canvas.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointermove', onPointerMove);
@@ -394,14 +444,20 @@ export const Chapter4BlackHole: React.FC<Chapter4BlackHoleProps> = ({
             <div className="col-span-2 sm:col-span-1 flex items-center justify-between sm:justify-end gap-4 sm:gap-6">
               <div>
                 <span className="text-[var(--text-muted)]">На Земле: </span>
-                <span className="text-xs sm:text-sm font-semibold text-[var(--accent-secondary)] tabular-nums">
-                  {observerSeconds.toFixed(1)} с
+                <span
+                  ref={observerClockRef}
+                  className="text-xs sm:text-sm font-semibold text-[var(--accent-secondary)] tabular-nums"
+                >
+                  0.0 с
                 </span>
               </div>
               <div>
                 <span className="text-[var(--text-muted)]">У дыры: </span>
-                <span className="text-xs sm:text-sm font-semibold text-[var(--accent-tertiary)] tabular-nums">
-                  {travelerSeconds.toFixed(1)} с
+                <span
+                  ref={travelerClockRef}
+                  className="text-xs sm:text-sm font-semibold text-[var(--accent-tertiary)] tabular-nums"
+                >
+                  0.0 с
                 </span>
               </div>
             </div>
@@ -427,10 +483,12 @@ export const Chapter4BlackHole: React.FC<Chapter4BlackHoleProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  setObserverSeconds(0);
-                  setTravelerSeconds(0);
+                  observerSecondsRef.current = 0;
+                  travelerSecondsRef.current = 0;
+                  if (observerClockRef.current) observerClockRef.current.textContent = '0.0 с';
+                  if (travelerClockRef.current) travelerClockRef.current.textContent = '0.0 с';
                   setDistanceRs(3.0);
-                  setTiltDeg(18);
+                  tiltRef.current = 18;
                 }}
                 className="min-h-[36px] px-3 py-1 rounded-full border border-[var(--border-subtle)] bg-black font-mono-tech text-xs text-[var(--text-muted)] hover:text-[var(--text-parchment)] flex items-center gap-1.5 active:scale-95 transition-all"
               >

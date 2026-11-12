@@ -308,11 +308,17 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
   const tourTimeRef = useRef<number>(0);
   const spectralFilterRef = useRef(spectralFilter);
   spectralFilterRef.current = spectralFilter;
+  const isPlayingTourRef = useRef(isPlayingTour);
+  isPlayingTourRef.current = isPlayingTour;
+  const selectedStarRef = useRef<StarCatalogItem | null>(selectedStar);
+  selectedStarRef.current = selectedStar;
 
   const handleSelectStar = (star: StarCatalogItem | null) => {
     setSelectedStar(star);
+    selectedStarRef.current = star;
     if (star) {
       setIsPlayingTour(false);
+      isPlayingTourRef.current = false;
       // Orient camera towards selected star smoothly
       const r = Math.hypot(star.x, star.z);
       const targetPitch = Math.atan2(star.y, r);
@@ -359,7 +365,6 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
         setIsAudioPlaying(true);
       } catch (err) {
         console.warn('Audio play request:', err);
-        // Fallback to MP3 if OGA had an issue
         if (!audio.src.endsWith('.mp3')) {
           audio.src = './audio/100000_stars.mp3';
           try {
@@ -401,7 +406,7 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
     };
   }, []);
 
-  // 3D Canvas WebGL & Procedural Particle Engine
+  // 3D Canvas Procedural Particle Engine (Initialized once, paused when offscreen or hidden)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -409,7 +414,9 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Generate 1200 3D procedural stars in spherical volume
+    const isMobile = window.innerWidth < 768;
+    const starCount = isMobile ? 900 : 1400;
+
     const proceduralStars: Array<{
       x: number;
       y: number;
@@ -430,17 +437,15 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
       { class: 'O', color: '#64B5F6', weight: 0.001 },
     ];
 
-    for (let i = 0; i < 1400; i++) {
-      // Exponential distribution around center
+    for (let i = 0; i < starCount; i++) {
       const r = Math.pow(Math.random(), 0.5) * 2.8 + 0.15;
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
 
       const x = r * Math.sin(phi) * Math.cos(theta);
-      const y = r * Math.sin(phi) * Math.sin(theta) * 0.42; // Flattish disk
+      const y = r * Math.sin(phi) * Math.sin(theta) * 0.42;
       const z = r * Math.cos(phi);
 
-      // Select spectral class based on weight
       const rand = Math.random();
       let cumulative = 0;
       let chosen = spectralDistribution[0];
@@ -464,12 +469,20 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
     }
 
     let animId = 0;
+    let isRunning = false;
+    let isVisible = false;
+    let cachedW = 340;
+    let cachedH = 340;
+    let cachedDpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.25 : 1.5);
 
     const onPointerDown = (e: PointerEvent) => {
       cameraRef.current.isDragging = true;
       cameraRef.current.lastX = e.clientX;
       cameraRef.current.lastY = e.clientY;
-      setIsPlayingTour(false);
+      if (isPlayingTourRef.current) {
+        isPlayingTourRef.current = false;
+        setIsPlayingTour(false);
+      }
     };
 
     const onPointerMove = (e: PointerEvent) => {
@@ -491,7 +504,6 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
       e.preventDefault();
       const zoomDelta = e.deltaY * -0.0015;
       cameraRef.current.targetZoom = Math.max(0.5, Math.min(3.2, cameraRef.current.targetZoom + zoomDelta));
-      setZoomLevel(cameraRef.current.targetZoom);
     };
 
     let initialPinchDist = 0;
@@ -515,7 +527,6 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
         const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
         const scale = dist / initialPinchDist;
         cameraRef.current.targetZoom = Math.max(0.5, Math.min(3.5, initialPinchZoom * scale));
-        setZoomLevel(cameraRef.current.targetZoom);
       }
     };
 
@@ -523,31 +534,29 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
       initialPinchDist = 0;
     };
 
-    canvas.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
+    canvas.addEventListener('pointerdown', onPointerDown, { passive: true });
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
+    window.addEventListener('pointerup', onPointerUp, { passive: true });
     canvas.addEventListener('wheel', onWheel, { passive: false });
     canvas.addEventListener('touchstart', onTouchStart, { passive: false });
     canvas.addEventListener('touchmove', onTouchMove, { passive: false });
-    canvas.addEventListener('touchend', onTouchEnd);
+    canvas.addEventListener('touchend', onTouchEnd, { passive: true });
 
     const handleCanvasClick = (e: MouseEvent) => {
       const rect = canvas.getBoundingClientRect();
       const clickX = e.clientX - rect.left;
       const clickY = e.clientY - rect.top;
 
-      // Check click against FAMOUS_STARS 2D projected screen positions
       let closestStar: StarCatalogItem | null = null;
-      let minDistance = 24; // 24px tap radius
+      let minDistance = 24;
+
+      const cam = cameraRef.current;
+      const cosY = Math.cos(cam.yaw);
+      const sinY = Math.sin(cam.yaw);
+      const cosP = Math.cos(cam.pitch);
+      const sinP = Math.sin(cam.pitch);
 
       for (const star of FAMOUS_STARS) {
-        // Project star to screen
-        const cam = cameraRef.current;
-        const cosY = Math.cos(cam.yaw);
-        const sinY = Math.sin(cam.yaw);
-        const cosP = Math.cos(cam.pitch);
-        const sinP = Math.sin(cam.pitch);
-
         const x1 = star.x * cosY - star.z * sinY;
         const z1 = star.x * sinY + star.z * cosY;
         const y2 = star.y * cosP - z1 * sinP;
@@ -575,54 +584,48 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
     canvas.addEventListener('click', handleCanvasClick);
 
     const resize = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      cachedDpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.25 : 1.5);
       const rect = canvas.getBoundingClientRect();
-      if (rect.width > 20) {
-        canvas.width = Math.max(1, Math.floor(rect.width * dpr));
-        canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+      if (rect.width > 20 && rect.height > 20) {
+        cachedW = rect.width;
+        cachedH = rect.height;
+        canvas.width = Math.max(1, Math.floor(cachedW * cachedDpr));
+        canvas.height = Math.max(1, Math.floor(cachedH * cachedDpr));
       }
     };
 
     resize();
-    window.addEventListener('resize', resize);
-
-    let ro: ResizeObserver | null = null;
-    if (typeof ResizeObserver !== 'undefined' && canvas.parentElement) {
-      ro = new ResizeObserver(() => {
-        resize();
-      });
-      ro.observe(canvas.parentElement);
-    }
+    window.addEventListener('resize', resize, { passive: true });
 
     const render = () => {
-      const cam = cameraRef.current;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const rect = canvas.getBoundingClientRect();
-      if (
-        rect.width > 20 &&
-        (canvas.width !== Math.floor(rect.width * dpr) || canvas.height !== Math.floor(rect.height * dpr))
-      ) {
-        canvas.width = Math.max(1, Math.floor(rect.width * dpr));
-        canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+      if (!isVisible || document.hidden || cachedW < 20) {
+        isRunning = false;
+        return;
       }
-      const w = Math.max(10, canvas.width / dpr);
-      const h = Math.max(10, canvas.height / dpr);
 
-      // Handle Cinematic Tour Mode animation
-      if (isPlayingTour) {
+      const cam = cameraRef.current;
+      const dpr = cachedDpr;
+      const w = cachedW;
+      const h = cachedH;
+
+      if (isPlayingTourRef.current) {
         tourTimeRef.current += 0.006;
         cam.targetYaw = tourTimeRef.current * 0.45;
         cam.targetPitch = Math.sin(tourTimeRef.current * 0.3) * 0.35 + 0.25;
         cam.targetZoom = 1.1 + Math.sin(tourTimeRef.current * 0.25) * 0.45;
       }
 
-      // Smooth interpolation
       cam.yaw += (cam.targetYaw - cam.yaw) * 0.08;
       cam.pitch += (cam.targetPitch - cam.pitch) * 0.08;
       cam.zoom += (cam.targetZoom - cam.zoom) * 0.08;
 
+      const cosY = Math.cos(cam.yaw);
+      const sinY = Math.sin(cam.yaw);
+      const cosP = Math.cos(cam.pitch);
+      const sinP = Math.sin(cam.pitch);
+
       ctx.save();
-      ctx.scale(dpr, dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
       // Deep space black backdrop
       ctx.fillStyle = '#020204';
@@ -642,21 +645,14 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
       ctx.lineWidth = 1;
       ctx.beginPath();
       for (let r = 0.5; r <= 2.2; r += 0.6) {
-        // Project horizontal rings
-        for (let a = 0; a <= Math.PI * 2 + 0.1; a += 0.1) {
+        for (let a = 0; a <= Math.PI * 2 + 0.15; a += 0.15) {
           const rx = r * Math.cos(a);
           const rz = r * Math.sin(a);
-          const ry = 0;
-
-          const cosY = Math.cos(cam.yaw);
-          const sinY = Math.sin(cam.yaw);
-          const cosP = Math.cos(cam.pitch);
-          const sinP = Math.sin(cam.pitch);
 
           const x1 = rx * cosY - rz * sinY;
           const z1 = rx * sinY + rz * cosY;
-          const y2 = ry * cosP - z1 * sinP;
-          const z2 = ry * sinP + z1 * cosP;
+          const y2 = -z1 * sinP;
+          const z2 = z1 * cosP;
 
           const distCam = z2 + 3.2;
           if (distCam > 0.2) {
@@ -680,11 +676,6 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
           continue;
         }
 
-        const cosY = Math.cos(cam.yaw);
-        const sinY = Math.sin(cam.yaw);
-        const cosP = Math.cos(cam.pitch);
-        const sinP = Math.sin(cam.pitch);
-
         const x1 = star.x * cosY - star.z * sinY;
         const z1 = star.x * sinY + star.z * cosY;
         const y2 = star.y * cosP - z1 * sinP;
@@ -697,34 +688,26 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
         const sx = w / 2 + x1 * fov;
         const sy = h / 2 - y2 * fov;
 
-        if (sx < -20 || sx > w + 20 || sy < -20 || sy > h + 20) continue;
+        if (sx < -10 || sx > w + 10 || sy < -10 || sy > h + 10) continue;
 
         const alpha = Math.min(1.0, star.brightness / (distanceCamera * 0.85));
         ctx.fillStyle = star.color;
         ctx.globalAlpha = alpha;
-        ctx.beginPath();
-        ctx.arc(sx, sy, Math.max(0.6, star.size * (1.2 / distanceCamera)), 0, Math.PI * 2);
-        ctx.fill();
+        const sSize = Math.max(0.7, star.size * (1.2 / distanceCamera));
+        ctx.fillRect(sx - sSize, sy - sSize, sSize * 2, sSize * 2);
       }
 
       // 2. Draw Distance Lines from Sol (Origin) to Famous Stars
       ctx.save();
+      ctx.setLineDash([3, 4]);
+      ctx.lineWidth = 1;
+      const solSx = w / 2;
+      const solSy = h / 2;
+
       for (const star of FAMOUS_STARS) {
         if (star.id === 'sol') continue;
         if (activeFilter !== 'ALL' && star.spectralClass !== activeFilter) continue;
 
-        const cosY = Math.cos(cam.yaw);
-        const sinY = Math.sin(cam.yaw);
-        const cosP = Math.cos(cam.pitch);
-        const sinP = Math.sin(cam.pitch);
-
-        // Project Sol
-        const solDistCam = 3.2;
-        const solFov = (w * 0.85 * cam.zoom) / solDistCam;
-        const solSx = w / 2;
-        const solSy = h / 2;
-
-        // Project Star
         const x1 = star.x * cosY - star.z * sinY;
         const z1 = star.x * sinY + star.z * cosY;
         const y2 = star.y * cosP - z1 * sinP;
@@ -738,25 +721,19 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
 
           ctx.strokeStyle = star.colorHex;
           ctx.globalAlpha = 0.18;
-          ctx.setLineDash([3, 4]);
-          ctx.lineWidth = 1;
           ctx.beginPath();
           ctx.moveTo(solSx, solSy);
           ctx.lineTo(starSx, starSy);
           ctx.stroke();
-          ctx.setLineDash([]);
         }
       }
       ctx.restore();
 
+      const currentSelId = selectedStarRef.current?.id;
+
       // 3. Draw Notable Famous Stars with Diffraction Spikes & Labels
       for (const star of FAMOUS_STARS) {
         if (activeFilter !== 'ALL' && star.spectralClass !== activeFilter) continue;
-
-        const cosY = Math.cos(cam.yaw);
-        const sinY = Math.sin(cam.yaw);
-        const cosP = Math.cos(cam.pitch);
-        const sinP = Math.sin(cam.pitch);
 
         const x1 = star.x * cosY - star.z * sinY;
         const z1 = star.x * sinY + star.z * cosY;
@@ -770,9 +747,8 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
         const sx = w / 2 + x1 * fov;
         const sy = h / 2 - y2 * fov;
 
-        const isSelected = selectedStar?.id === star.id;
+        const isSelected = currentSelId === star.id;
 
-        // Glow halo
         const haloRadius = (isSelected ? 26 : 14) * (1.2 / distanceCamera);
         const haloGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, haloRadius);
         haloGrad.addColorStop(0, star.colorHex);
@@ -784,7 +760,6 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
         ctx.arc(sx, sy, haloRadius, 0, Math.PI * 2);
         ctx.fill();
 
-        // 4-point diffraction spike
         ctx.strokeStyle = star.colorHex;
         ctx.globalAlpha = isSelected ? 0.85 : 0.45;
         ctx.lineWidth = isSelected ? 1.5 : 1;
@@ -796,14 +771,12 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
         ctx.lineTo(sx, sy + spikeLen);
         ctx.stroke();
 
-        // Solid Star Core
         ctx.fillStyle = '#FFFFFF';
         ctx.globalAlpha = 1.0;
         ctx.beginPath();
         ctx.arc(sx, sy, Math.max(2, star.screenRadius * (1.1 / distanceCamera)), 0, Math.PI * 2);
         ctx.fill();
 
-        // Selection Target Ring
         if (isSelected) {
           ctx.strokeStyle = '#FFE8A3';
           ctx.lineWidth = 1.5;
@@ -813,14 +786,12 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
           ctx.stroke();
         }
 
-        // Text Label
         ctx.font = '600 11px JetBrains Mono, monospace';
         ctx.fillStyle = isSelected ? '#FFFFFF' : '#E8EDF5';
         ctx.globalAlpha = isSelected ? 1.0 : 0.85;
         ctx.textAlign = 'left';
         ctx.fillText(star.name, sx + haloRadius + 4, sy + 3);
 
-        // Distance subtext
         ctx.font = '400 9px JetBrains Mono, monospace';
         ctx.fillStyle = star.colorHex;
         ctx.globalAlpha = 0.75;
@@ -835,10 +806,56 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
       animId = requestAnimationFrame(render);
     };
 
-    animId = requestAnimationFrame(render);
+    const startLoop = () => {
+      if (!isRunning && isVisible && !document.hidden) {
+        resize();
+        if (cachedW >= 20) {
+          isRunning = true;
+          animId = requestAnimationFrame(render);
+        }
+      }
+    };
+
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && canvas.parentElement) {
+      ro = new ResizeObserver(() => {
+        resize();
+        if (cachedW >= 20 && isVisible) {
+          startLoop();
+        }
+      });
+      ro.observe(canvas.parentElement);
+    }
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        isVisible = entries[0]?.isIntersecting ?? false;
+        if (isVisible) {
+          startLoop();
+        } else {
+          cancelAnimationFrame(animId);
+          isRunning = false;
+        }
+      },
+      { rootMargin: '100px' }
+    );
+    io.observe(canvas);
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        cancelAnimationFrame(animId);
+        isRunning = false;
+      } else {
+        startLoop();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
 
     return () => {
       cancelAnimationFrame(animId);
+      io.disconnect();
+      if (ro) ro.disconnect();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('resize', resize);
       canvas.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointermove', onPointerMove);
@@ -849,7 +866,7 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
       canvas.removeEventListener('touchend', onTouchEnd);
       canvas.removeEventListener('click', handleCanvasClick);
     };
-  }, [isPlayingTour]);
+  }, []);
 
   return (
     <div className="w-full space-y-4">
@@ -857,7 +874,7 @@ export const Stars100kExplorer: React.FC<Stars100kExplorerProps> = ({
       <audio
         ref={audioRef}
         loop
-        preload="auto"
+        preload="metadata"
         onPlay={() => setIsAudioPlaying(true)}
         onPause={() => setIsAudioPlaying(false)}
         onError={() => {

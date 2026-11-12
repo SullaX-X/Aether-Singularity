@@ -32,22 +32,30 @@ export const HeroArmillary: React.FC<HeroArmillaryProps> = ({
     if (!ctx) return;
 
     let animationFrameId = 0;
+    let isRunning = false;
+    let isVisible = true;
     let rotation = 0;
     let userYaw = 0;
     let targetYaw = 0;
     let isDragging = false;
     let lastX = 0;
+    let cachedW = 300;
+    let cachedH = 300;
+    const isMobile = window.innerWidth < 768;
+    const ringSteps = isMobile ? 52 : 76;
 
     const resize = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.25 : 1.5);
       const rect = canvas.getBoundingClientRect();
-      canvas.width = Math.max(1, Math.floor(rect.width * dpr));
-      canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+      cachedW = Math.max(1, rect.width);
+      cachedH = Math.max(1, rect.height);
+      canvas.width = Math.max(1, Math.floor(cachedW * dpr));
+      canvas.height = Math.max(1, Math.floor(cachedH * dpr));
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
 
     resize();
-    window.addEventListener('resize', resize);
+    window.addEventListener('resize', resize, { passive: true });
 
     const onPointerDown = (e: PointerEvent) => {
       isDragging = true;
@@ -63,9 +71,12 @@ export const HeroArmillary: React.FC<HeroArmillaryProps> = ({
       isDragging = false;
     };
 
-    canvas.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
+    canvas.addEventListener('pointerdown', onPointerDown, { passive: true });
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
+    window.addEventListener('pointerup', onPointerUp, { passive: true });
+
+    const cosTilt = Math.cos(0.35);
+    const sinTilt = Math.sin(0.35);
 
     const project = (
       x: number,
@@ -73,18 +84,14 @@ export const HeroArmillary: React.FC<HeroArmillaryProps> = ({
       z: number,
       cx: number,
       cy: number,
-      tiltX: number,
-      yawY: number
+      cosY: number,
+      sinY: number
     ) => {
-      const cosY = Math.cos(yawY);
-      const sinY = Math.sin(yawY);
       const x1 = x * cosY - z * sinY;
       const z1 = x * sinY + z * cosY;
 
-      const cosX = Math.cos(tiltX);
-      const sinX = Math.sin(tiltX);
-      const y2 = y * cosX - z1 * sinX;
-      const z2 = y * sinX + z1 * cosX;
+      const y2 = y * cosTilt - z1 * sinTilt;
+      const z2 = y * sinTilt + z1 * cosTilt;
 
       const perspective = 600 / (600 + z2 * 0.45);
       return {
@@ -100,13 +107,20 @@ export const HeroArmillary: React.FC<HeroArmillaryProps> = ({
       rzRot: number,
       cx: number,
       cy: number,
-      globalTilt: number,
       globalYaw: number,
       strokeColor: string,
       lineWidth: number,
       dashed = false
     ) => {
-      const steps = 80;
+      const cX = Math.cos(rxRot),
+        sX = Math.sin(rxRot);
+      const cY = Math.cos(ryRot),
+        sY = Math.sin(ryRot);
+      const cZ = Math.cos(rzRot),
+        sZ = Math.sin(rzRot);
+      const cosYaw = Math.cos(globalYaw);
+      const sinYaw = Math.sin(globalYaw);
+
       ctx.save();
       ctx.strokeStyle = strokeColor;
       ctx.lineWidth = lineWidth;
@@ -114,34 +128,28 @@ export const HeroArmillary: React.FC<HeroArmillaryProps> = ({
         ctx.setLineDash([4, 6]);
       }
       ctx.beginPath();
-      for (let i = 0; i <= steps; i++) {
-        const theta = (i / steps) * Math.PI * 2;
+      for (let i = 0; i <= ringSteps; i++) {
+        const theta = (i / ringSteps) * Math.PI * 2;
         let x = Math.cos(theta) * radius;
         let y = Math.sin(theta) * radius;
         let z = 0;
 
-        const cX = Math.cos(rxRot),
-          sX = Math.sin(rxRot);
         const y1 = y * cX - z * sX;
         const z1 = y * sX + z * cX;
         y = y1;
         z = z1;
 
-        const cY = Math.cos(ryRot),
-          sY = Math.sin(ryRot);
         const x2 = x * cY - z * sY;
         const z2 = x * sY + z * cY;
         x = x2;
         z = z2;
 
-        const cZ = Math.cos(rzRot),
-          sZ = Math.sin(rzRot);
         const x3 = x * cZ - y * sZ;
         const y3 = x * sZ + y * cZ;
         x = x3;
         y = y3;
 
-        const { px, py } = project(x, y, z, cx, cy, globalTilt, globalYaw);
+        const { px, py } = project(x, y, z, cx, cy, cosYaw, sinYaw);
         if (i === 0) ctx.moveTo(px, py);
         else ctx.lineTo(px, py);
       }
@@ -150,9 +158,13 @@ export const HeroArmillary: React.FC<HeroArmillaryProps> = ({
     };
 
     const render = () => {
-      const rect = canvas.getBoundingClientRect();
-      const w = rect.width;
-      const h = rect.height;
+      if (!isVisible || document.hidden) {
+        isRunning = false;
+        return;
+      }
+
+      const w = cachedW;
+      const h = cachedH;
       ctx.clearRect(0, 0, w, h);
 
       rotation += 0.0045;
@@ -179,15 +191,17 @@ export const HeroArmillary: React.FC<HeroArmillaryProps> = ({
       ctx.restore();
 
       const totalYaw = rotation + userYaw;
+      const cosTotalYaw = Math.cos(totalYaw);
+      const sinTotalYaw = Math.sin(totalYaw);
 
-      drawRing3D(R, 0, 0, 0, cx, cy, 0.35, totalYaw * 0.5, goldMain, 1.6);
-      drawRing3D(R * 0.94, 0, Math.PI / 2, 0, cx, cy, 0.35, totalYaw * 0.5, goldSoft, 1.1);
-      drawRing3D(R * 0.88, Math.PI / 2, 0, 0, cx, cy, 0.35, totalYaw, goldMain, 1.2);
-      drawRing3D(R * 0.91, Math.PI / 2 + axialTilt, 0, 0, cx, cy, 0.35, totalYaw * 1.2, cyanAccent, 1.5);
-      drawRing3D(R * 0.48, Math.PI / 3, rotation * 0.7, 0, cx, cy, 0.35, totalYaw, goldSoft, 1.0, true);
+      drawRing3D(R, 0, 0, 0, cx, cy, totalYaw * 0.5, goldMain, 1.6);
+      drawRing3D(R * 0.94, 0, Math.PI / 2, 0, cx, cy, totalYaw * 0.5, goldSoft, 1.1);
+      drawRing3D(R * 0.88, Math.PI / 2, 0, 0, cx, cy, totalYaw, goldMain, 1.2);
+      drawRing3D(R * 0.91, Math.PI / 2 + axialTilt, 0, 0, cx, cy, totalYaw * 1.2, cyanAccent, 1.5);
+      drawRing3D(R * 0.48, Math.PI / 3, rotation * 0.7, 0, cx, cy, totalYaw, goldSoft, 1.0, true);
 
-      const northPole = project(0, -R * 1.05, 0, cx, cy, 0.35, totalYaw);
-      const southPole = project(0, R * 1.05, 0, cx, cy, 0.35, totalYaw);
+      const northPole = project(0, -R * 1.05, 0, cx, cy, cosTotalYaw, sinTotalYaw);
+      const southPole = project(0, R * 1.05, 0, cx, cy, cosTotalYaw, sinTotalYaw);
       ctx.save();
       ctx.strokeStyle = goldSoft;
       ctx.lineWidth = 1.2;
@@ -201,7 +215,8 @@ export const HeroArmillary: React.FC<HeroArmillaryProps> = ({
       const px3d = Math.cos(pTheta) * R * 0.91;
       const py3d = Math.sin(pTheta) * R * 0.91 * Math.cos(Math.PI / 2 + axialTilt);
       const pz3d = Math.sin(pTheta) * R * 0.91 * Math.sin(Math.PI / 2 + axialTilt);
-      const planetProj = project(px3d, py3d, pz3d, cx, cy, 0.35, totalYaw * 1.2);
+      const planetYaw = totalYaw * 1.2;
+      const planetProj = project(px3d, py3d, pz3d, cx, cy, Math.cos(planetYaw), Math.sin(planetYaw));
 
       ctx.save();
       ctx.fillStyle = cyanAccent;
@@ -228,10 +243,44 @@ export const HeroArmillary: React.FC<HeroArmillaryProps> = ({
       animationFrameId = requestAnimationFrame(render);
     };
 
-    animationFrameId = requestAnimationFrame(render);
+    const startLoop = () => {
+      if (!isRunning && isVisible && !document.hidden) {
+        isRunning = true;
+        animationFrameId = requestAnimationFrame(render);
+      }
+    };
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        isVisible = entries[0]?.isIntersecting ?? true;
+        if (isVisible) {
+          resize();
+          startLoop();
+        } else {
+          cancelAnimationFrame(animationFrameId);
+          isRunning = false;
+        }
+      },
+      { rootMargin: '100px' }
+    );
+    io.observe(canvas);
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        cancelAnimationFrame(animationFrameId);
+        isRunning = false;
+      } else {
+        startLoop();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    startLoop();
 
     return () => {
       cancelAnimationFrame(animationFrameId);
+      io.disconnect();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('resize', resize);
       canvas.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointermove', onPointerMove);

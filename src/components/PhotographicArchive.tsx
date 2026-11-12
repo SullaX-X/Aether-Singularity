@@ -152,125 +152,129 @@ export const PhotographicArchive: React.FC<PhotographicArchiveProps> = ({
           {activeTarget.orbitLabel}
         </div>
 
-        {/* Celestial Body Center Stage with Orbit and Debris */}
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={activeTarget.id}
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.96 }}
-            transition={{ duration: 0.3, ease: 'easeOut' }}
-            className="relative w-full h-full flex items-center justify-center"
+        {/* Celestial Body Center Stage with Orbit and Debris (Pre-decoded SVG globes for 0ms tab switching) */}
+        <div className="relative w-full h-full flex items-center justify-center">
+          {/* Background SVG Layer: Diagonal Axis Line (for Earth/Ganymede) + Back Half of Orbit */}
+          <svg
+            className="absolute inset-0 w-full h-full pointer-events-none z-0"
+            viewBox="0 0 460 300"
+            preserveAspectRatio="xMidYMid meet"
           >
-            {/* Background SVG Layer: Diagonal Axis Line (for Earth/Ganymede) + Back Half of Orbit */}
-            <svg
-              className="absolute inset-0 w-full h-full pointer-events-none z-0"
-              viewBox="0 0 460 300"
-              preserveAspectRatio="xMidYMid meet"
-            >
-              {/* Diagonal reference trajectory line for Earth and Ganymede (as in reference screenshots) */}
-              {!activeTarget.hasDebrisRing && (
-                <line
-                  x1="125"
-                  y1="262"
-                  x2="335"
-                  y2="38"
-                  stroke="rgba(212, 163, 115, 0.32)"
-                  strokeWidth="1.2"
-                  strokeDasharray="4 5"
-                />
-              )}
+            {/* Diagonal reference trajectory line for Earth and Ganymede */}
+            {!activeTarget.hasDebrisRing && (
+              <line
+                x1="125"
+                y1="262"
+                x2="335"
+                y2="38"
+                stroke="rgba(212, 163, 115, 0.32)"
+                strokeWidth="1.2"
+                strokeDasharray="4 5"
+              />
+            )}
 
-              {/* Horizontal Elliptical Orbit Track (Back Half) */}
-              <g transform="translate(230, 150)">
-                <path
-                  d="M -162 0 A 162 50 0 0 1 162 0"
-                  fill="none"
-                  stroke="rgba(212, 163, 115, 0.28)"
-                  strokeWidth="1.15"
-                  strokeDasharray="4 5"
-                />
+            {/* Horizontal Elliptical Orbit Track (Back Half) */}
+            <g transform="translate(230, 150)">
+              <path
+                d="M -162 0 A 162 50 0 0 1 162 0"
+                fill="none"
+                stroke="rgba(212, 163, 115, 0.28)"
+                strokeWidth="1.15"
+                strokeDasharray="4 5"
+              />
 
-                {/* Kuiper or Asteroid Belt Debris in back arc */}
-                {activeTarget.hasDebrisRing &&
-                  DEBRIS_PARTICLES.slice(0, 11).map((p, idx) => {
-                    const angle = Math.PI + (idx / 11) * Math.PI;
-                    const rx = 162 + p.rOffset * 1.4;
-                    const ry = 50 + p.rOffset * 0.6;
-                    const px = Math.cos(angle) * rx;
-                    const py = Math.sin(angle) * ry;
-                    return (
-                      <circle
-                        key={`back-${idx}`}
-                        cx={px}
-                        cy={py}
-                        r={p.size * 0.78}
-                        fill={p.color}
-                        opacity={p.opacity * 0.6}
-                      />
-                    );
-                  })}
-              </g>
-            </svg>
+              {/* Kuiper or Asteroid Belt Debris in back arc */}
+              {activeTarget.hasDebrisRing &&
+                DEBRIS_PARTICLES.slice(0, 11).map((p, idx) => {
+                  const angle = Math.PI + (idx / 11) * Math.PI;
+                  const rx = 162 + p.rOffset * 1.4;
+                  const ry = 50 + p.rOffset * 0.6;
+                  const px = Math.cos(angle) * rx;
+                  const py = Math.sin(angle) * ry;
+                  return (
+                    <circle
+                      key={`back-${idx}`}
+                      cx={px}
+                      cy={py}
+                      r={p.size * 0.78}
+                      fill={p.color}
+                      opacity={p.opacity * 0.6}
+                    />
+                  );
+                })}
+            </g>
+          </svg>
 
-            {/* Central Photographic Globe Object */}
-            <div className="relative z-10 flex items-center justify-center">
-              <div className="relative w-44 h-44 sm:w-56 sm:h-56 md:w-64 md:h-64 flex items-center justify-center">
-                <img
-                  src={activeTarget.imageSrc}
-                  alt={activeTarget.name}
-                  className="w-full h-full object-contain block drop-shadow-[0_0_25px_rgba(0,0,0,0.95)]"
-                  loading="eager"
-                />
-                {/* Occator Crater bright facula marker on Ceres (matching reference screenshot) */}
-                {activeTarget.id === 'ceres' && (
+          {/* Central Photographic Globe Object (All 4 pre-mounted & GPU-composited for instant switching) */}
+          <div className="relative z-10 flex items-center justify-center">
+            <div className="relative w-44 h-44 sm:w-56 sm:h-56 md:w-64 md:h-64 flex items-center justify-center">
+              {ARCHIVE_TARGETS.map((target) => {
+                const isSelected = target.id === activeId;
+                return (
                   <div
-                    className="absolute w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-[#E9D8A6] shadow-[0_0_10px_#E9D8A6] pointer-events-none"
-                    style={{ left: '52.5%', top: '48.5%', transform: 'translate(-50%, -50%)' }}
-                  />
-                )}
-              </div>
-            </div>
-
-            {/* Foreground Orbit Arc and Debris Layer (Passes in front of planet) */}
-            <svg
-              className="absolute inset-0 w-full h-full pointer-events-none z-15"
-              viewBox="0 0 460 300"
-              preserveAspectRatio="xMidYMid meet"
-            >
-              <g transform="translate(230, 150)">
-                {/* Front half of orbit */}
-                <path
-                  d="M 162 0 A 162 50 0 0 1 -162 0"
-                  fill="none"
-                  stroke="rgba(212, 163, 115, 0.42)"
-                  strokeWidth="1.25"
-                  strokeDasharray="4 5"
-                />
-
-                {/* Kuiper or Asteroid Belt Debris in front arc */}
-                {activeTarget.hasDebrisRing &&
-                  DEBRIS_PARTICLES.slice(11).map((p, idx) => {
-                    const angle = (idx / 11) * Math.PI;
-                    const rx = 162 + p.rOffset * 1.4;
-                    const ry = 50 + p.rOffset * 0.6;
-                    const px = Math.cos(angle) * rx;
-                    const py = Math.sin(angle) * ry;
-                    return (
-                      <circle
-                        key={`front-${idx}`}
-                        cx={px}
-                        cy={py}
-                        r={p.size}
-                        fill={p.color}
-                        opacity={p.opacity}
+                    key={target.id}
+                    className={`absolute inset-0 flex items-center justify-center transition-all duration-300 ease-out transform-gpu ${
+                      isSelected
+                        ? 'opacity-100 scale-100 z-10'
+                        : 'opacity-0 scale-95 pointer-events-none z-0'
+                    }`}
+                  >
+                    <img
+                      src={target.imageSrc}
+                      alt={target.name}
+                      decoding="async"
+                      className="w-full h-full object-contain block"
+                    />
+                    {target.id === 'ceres' && (
+                      <div
+                        className="absolute w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-[#E9D8A6] shadow-[0_0_10px_#E9D8A6] pointer-events-none"
+                        style={{ left: '52.5%', top: '48.5%', transform: 'translate(-50%, -50%)' }}
                       />
-                    );
-                  })}
-              </g>
-            </svg>
-          </motion.div>
-        </AnimatePresence>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Foreground Orbit Arc and Debris Layer (Passes in front of planet) */}
+          <svg
+            className="absolute inset-0 w-full h-full pointer-events-none z-15"
+            viewBox="0 0 460 300"
+            preserveAspectRatio="xMidYMid meet"
+          >
+            <g transform="translate(230, 150)">
+              {/* Front half of orbit */}
+              <path
+                d="M 162 0 A 162 50 0 0 1 -162 0"
+                fill="none"
+                stroke="rgba(212, 163, 115, 0.42)"
+                strokeWidth="1.25"
+                strokeDasharray="4 5"
+              />
+
+              {/* Kuiper or Asteroid Belt Debris in front arc */}
+              {activeTarget.hasDebrisRing &&
+                DEBRIS_PARTICLES.slice(11).map((p, idx) => {
+                  const angle = (idx / 11) * Math.PI;
+                  const rx = 162 + p.rOffset * 1.4;
+                  const ry = 50 + p.rOffset * 0.6;
+                  const px = Math.cos(angle) * rx;
+                  const py = Math.sin(angle) * ry;
+                  return (
+                    <circle
+                      key={`front-${idx}`}
+                      cx={px}
+                      cy={py}
+                      r={p.size}
+                      fill={p.color}
+                      opacity={p.opacity}
+                    />
+                  );
+                })}
+            </g>
+          </svg>
+        </div>
       </div>
 
       {/* Prominent Action Button: Story of Eris Discovery & 2006 Drama */}

@@ -42,7 +42,12 @@ export const Chapter2PlanetSieve: React.FC<Chapter2PlanetSieveProps> = ({
     if (!ctx) return;
 
     let animId = 0;
+    let isRunning = false;
+    let isVisible = true;
     let angle = 0;
+    let cachedW = 300;
+    let cachedH = 240;
+    const isMobile = window.innerWidth < 768;
 
     const debris = Array.from({ length: 70 }, (_, i) => ({
       angle: (i / 70) * Math.PI * 2 + (i % 7) * 0.13,
@@ -52,20 +57,26 @@ export const Chapter2PlanetSieve: React.FC<Chapter2PlanetSieveProps> = ({
     }));
 
     const resize = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.25 : 1.5);
       const rect = canvas.getBoundingClientRect();
-      canvas.width = Math.max(1, Math.floor(rect.width * dpr));
-      canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+      cachedW = Math.max(1, rect.width);
+      cachedH = Math.max(1, rect.height);
+      canvas.width = Math.max(1, Math.floor(cachedW * dpr));
+      canvas.height = Math.max(1, Math.floor(cachedH * dpr));
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
 
     resize();
-    window.addEventListener('resize', resize);
+    window.addEventListener('resize', resize, { passive: true });
 
     const render = () => {
-      const rect = canvas.getBoundingClientRect();
-      const w = rect.width;
-      const h = rect.height;
+      if (!isVisible || document.hidden) {
+        isRunning = false;
+        return;
+      }
+
+      const w = cachedW;
+      const h = cachedH;
       ctx.clearRect(0, 0, w, h);
 
       angle += 0.008;
@@ -92,21 +103,23 @@ export const Chapter2PlanetSieve: React.FC<Chapter2PlanetSieveProps> = ({
 
       if (id === 'pluto' || id === 'ceres' || id === 'asteroid') {
         ctx.save();
-        debris.forEach((p) => {
+        ctx.fillStyle =
+          id === 'pluto'
+            ? isRed
+              ? 'rgba(255,80,80,0.55)'
+              : 'rgba(76, 201, 240, 0.5)'
+            : muted;
+        ctx.beginPath();
+        for (let i = 0; i < debris.length; i++) {
+          const p = debris[i];
           const a = p.angle + angle * p.speed;
           const r = orbitR + p.radiusOffset;
           const px = cx + Math.cos(a) * r;
           const py = cy + Math.sin(a) * r;
-          ctx.fillStyle =
-            id === 'pluto'
-              ? isRed
-                ? 'rgba(255,80,80,0.55)'
-                : 'rgba(76, 201, 240, 0.5)'
-              : muted;
-          ctx.beginPath();
+          ctx.moveTo(px + p.size, py);
           ctx.arc(px, py, p.size, 0, Math.PI * 2);
-          ctx.fill();
-        });
+        }
+        ctx.fill();
         ctx.restore();
       }
 
@@ -176,9 +189,44 @@ export const Chapter2PlanetSieve: React.FC<Chapter2PlanetSieveProps> = ({
       animId = requestAnimationFrame(render);
     };
 
-    animId = requestAnimationFrame(render);
+    const startLoop = () => {
+      if (!isRunning && isVisible && !document.hidden) {
+        isRunning = true;
+        animId = requestAnimationFrame(render);
+      }
+    };
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        isVisible = entries[0]?.isIntersecting ?? true;
+        if (isVisible) {
+          resize();
+          startLoop();
+        } else {
+          cancelAnimationFrame(animId);
+          isRunning = false;
+        }
+      },
+      { rootMargin: '100px' }
+    );
+    io.observe(canvas);
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        cancelAnimationFrame(animId);
+        isRunning = false;
+      } else {
+        startLoop();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    startLoop();
+
     return () => {
       cancelAnimationFrame(animId);
+      io.disconnect();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('resize', resize);
     };
   }, []);
